@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { writeFile, mkdir, readdir, unlink } from 'fs/promises';
+import { writeFile, mkdir, readdir, unlink, stat } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
+import { tmpdir } from 'os';
 
-const UPLOAD_DIR = join(process.cwd(), 'public', 'uploads');
+export const runtime = 'nodejs';
+
+const UPLOAD_DIR = join(tmpdir(), 'packet-post-uploads');
 
 // Clean up old files (older than 1 hour)
 async function cleanupOldFiles() {
@@ -15,7 +18,7 @@ async function cleanupOldFiles() {
     
     for (const file of files) {
       const filePath = join(UPLOAD_DIR, file);
-      const stats = await import('fs').then(fs => fs.promises.stat(filePath));
+      const stats = await stat(filePath);
       if (stats.mtimeMs < oneHourAgo) {
         await unlink(filePath);
       }
@@ -58,8 +61,8 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(arrayBuffer);
     await writeFile(filepath, buffer);
     
-    // Return the download URL
-    const downloadUrl = `/uploads/${filename}`;
+    // Return a download URL served by an API route, so files can live in /tmp.
+    const downloadUrl = `/api/download/${encodeURIComponent(filename)}?name=${encodeURIComponent(file.name)}`;
     
     return NextResponse.json({
       success: true,
@@ -70,7 +73,7 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Upload error:', error);
     return NextResponse.json(
-      { success: false, message: 'Upload failed' },
+      { success: false, message: 'Upload failed on server' },
       { status: 500 }
     );
   }
