@@ -1,0 +1,45 @@
+@config "../tailwind.config.ts";
+
+@import "tailwindcss";
+
+/* making the background as dark emarald */
+
+@layer base {
+  :root {
+    --background: 160 60% 12%;
+    --foreground: 210 20% 94%;
+    --card: 222 24% 12%;
+    --card-foreground: 210 20% 94%;
+    --popover: 222 24% 11%;
+    --popover-foreground: 210 20% 94%;
+    --primary: 160 70% 46%;
+    --primary-foreground: 222 28% 8%;
+    --secondary: 222 18% 18%;
+    --secondary-foreground: 210 20% 94%;
+    --muted: 222 18% 16%;
+    --muted-foreground: 215 15% 70%;
+    --accent: 190 80% 36%;
+    --accent-foreground: 210 20% 94%;
+    --destructive: 0 72% 52%;
+    --destructive-foreground: 210 40% 98%;
+    --border: 220 14% 28%;
+    --input: 220 14% 24%;
+    --ring: 190 80% 50%;
+    --radius: 0.5rem;
+  }
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+  body {
+    min-height: 100dvh;
+    background-color: hsl(var(--background));
+    background-image:
+      radial-gradient(circle at 12% 12%, hsla(190, 90%, 42%, 0.14), transparent 34%),
+      radial-gradient(circle at 88% 10%, hsla(160, 84%, 44%, 0.1), transparent 38%),
+      linear-gradient(180deg, hsl(222 28% 9%), hsl(222 30% 7%));
+    color: hsl(var(--foreground));
+  }
+}
