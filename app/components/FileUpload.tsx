@@ -24,6 +24,7 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
+import WebRTCTransfer from './WebRTCTransfer';
 
 interface UploadResult {
   success: boolean;
@@ -53,6 +54,7 @@ function formatFileSize(bytes: number): string {
 }
 
 export default function FileUpload() {
+  const [mode, setMode] = useState<'classic' | 'live'>('classic');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState('');
@@ -126,7 +128,7 @@ export default function FileUpload() {
       } else {
         setError(data.message || 'Upload failed');
       }
-    } catch (err) {
+    } catch {
       setError('Upload failed. Please try again.');
     } finally {
       setIsUploading(false);
@@ -140,7 +142,7 @@ export default function FileUpload() {
       await navigator.clipboard.writeText(fullLink);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
+    } catch {
       const textarea = document.createElement('textarea');
       textarea.value = fullLink;
       document.body.appendChild(textarea);
@@ -170,7 +172,7 @@ export default function FileUpload() {
               </Badge>
               <div className="flex items-center gap-1.5 text-xs text-zinc-300">
                 <Shield className="h-3.5 w-3.5 text-emerald-300" />
-                Secure temporary links
+                {mode === 'classic' ? 'Secure temporary links' : 'Private browser-to-browser flow'}
               </div>
             </div>
             <div className="space-y-1">
@@ -178,171 +180,211 @@ export default function FileUpload() {
                 Share files in seconds
               </CardTitle>
               <CardDescription className="max-w-2xl text-sm text-zinc-300">
-                Drop one file, upload instantly, then copy a ready-to-share link.
+                {mode === 'classic'
+                  ? 'Drop one file, upload instantly, then copy a ready-to-share link.'
+                  : 'Live P2P interface for sender/receiver setup and connection state.'}
               </CardDescription>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                onClick={() => setMode('classic')}
+                variant={mode === 'classic' ? 'default' : 'outline'}
+                className={cn(
+                  'h-8 px-3 text-xs',
+                  mode === 'classic'
+                    ? 'bg-emerald-400 text-zinc-900 hover:bg-emerald-300'
+                    : 'border-zinc-600 text-zinc-200 hover:bg-zinc-800'
+                )}
+              >
+                Classic upload
+              </Button>
+              <Button
+                type="button"
+                onClick={() => setMode('live')}
+                variant={mode === 'live' ? 'default' : 'outline'}
+                className={cn(
+                  'h-8 px-3 text-xs',
+                  mode === 'live'
+                    ? 'bg-cyan-400 text-zinc-900 hover:bg-cyan-300'
+                    : 'border-zinc-600 text-zinc-200 hover:bg-zinc-800'
+                )}
+              >
+                Live P2P (WebRTC)
+              </Button>
             </div>
           </CardHeader>
 
-          <CardContent className="grid gap-4 p-4 md:grid-cols-5 md:gap-6 md:p-6">
-            <section className="space-y-3 md:col-span-3">
-              <div
-                className={cn(
-                  'group relative rounded-xl border-2 border-dashed p-6 text-center transition-all',
-                  isDragOver
-                    ? 'border-emerald-400 bg-emerald-400/10 shadow-[0_0_0_4px_rgba(52,211,153,0.16)]'
-                    : 'border-zinc-700 bg-zinc-900/70 hover:border-zinc-500 hover:bg-zinc-900'
-                )}
-                onClick={() => fileInputRef.current?.click()}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                onDrop={handleDrop}
-              >
-                <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-zinc-800/80">
-                  <FileIcon className="h-6 w-6 text-emerald-300" />
+          {mode === 'classic' ? (
+            <CardContent className="grid gap-4 p-4 md:grid-cols-5 md:gap-6 md:p-6">
+              <section className="space-y-3 md:col-span-3">
+                <div
+                  className={cn(
+                    'group relative rounded-xl border-2 border-dashed p-6 text-center transition-all',
+                    isDragOver
+                      ? 'border-emerald-400 bg-emerald-400/10 shadow-[0_0_0_4px_rgba(52,211,153,0.16)]'
+                      : 'border-zinc-700 bg-zinc-900/70 hover:border-zinc-500 hover:bg-zinc-900'
+                  )}
+                  onClick={() => fileInputRef.current?.click()}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                >
+                  <div className="mx-auto mb-2 flex h-12 w-12 items-center justify-center rounded-full bg-zinc-800/80">
+                    <FileIcon className="h-6 w-6 text-emerald-300" />
+                  </div>
+                  <p className="text-sm font-medium text-zinc-100">Drag and drop a file</p>
+                  <p className="mt-1 text-sm text-zinc-400">
+                    or <span className="font-semibold text-emerald-300">browse your device</span>
+                  </p>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    id="fileInput"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
                 </div>
-                <p className="text-sm font-medium text-zinc-100">Drag and drop a file</p>
-                <p className="mt-1 text-sm text-zinc-400">
-                  or <span className="font-semibold text-emerald-300">browse your device</span>
-                </p>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  id="fileInput"
-                  onChange={handleFileSelect}
-                  className="hidden"
-                />
-              </div>
 
-              {selectedFile && (
-                <div className="animate-fade-in rounded-xl border border-zinc-700 bg-zinc-900/70 p-3">
-                  <div className="flex items-center gap-3">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/10">
-                      {(() => {
-                        const Icon = getFileIcon(selectedFile.name);
-                        return <Icon className="h-5 w-5 text-emerald-300" />;
-                      })()}
+                {selectedFile && (
+                  <div className="animate-fade-in rounded-xl border border-zinc-700 bg-zinc-900/70 p-3">
+                    <div className="flex items-center gap-3">
+                      <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-emerald-500/10">
+                        {(() => {
+                          const Icon = getFileIcon(selectedFile.name);
+                          return <Icon className="h-5 w-5 text-emerald-300" />;
+                        })()}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-sm font-medium text-zinc-100">{selectedFile.name}</p>
+                        <p className="text-xs text-zinc-400">{formatFileSize(selectedFile.size)}</p>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleRemove();
+                        }}
+                      >
+                        <X className="h-4 w-4" />
+                      </Button>
                     </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-medium text-zinc-100">{selectedFile.name}</p>
-                      <p className="text-xs text-zinc-400">{formatFileSize(selectedFile.size)}</p>
-                    </div>
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 text-zinc-300 hover:bg-zinc-800 hover:text-zinc-100"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        handleRemove();
-                      }}
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
                   </div>
-                </div>
-              )}
-
-              {error && (
-                <div className="animate-fade-in rounded-lg border border-red-300/40 bg-red-500/10 p-3 text-sm text-red-200">
-                  {error}
-                </div>
-              )}
-
-              <Button
-                className="h-10 w-full bg-emerald-400 text-zinc-900 hover:bg-emerald-300"
-                onClick={handleUpload}
-                disabled={!selectedFile || isUploading}
-              >
-                {isUploading ? (
-                  <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Uploading...
-                  </>
-                ) : (
-                  <>
-                    <Upload className="mr-2 h-4 w-4" />
-                    Upload file
-                  </>
                 )}
-              </Button>
 
-              {result?.success && (
-                <div className="animate-fade-in space-y-3 rounded-xl border border-emerald-300/40 bg-emerald-500/10 p-4">
-                  <div className="flex items-center gap-2 text-sm font-medium text-emerald-100">
-                    <Check className="h-4 w-4" />
-                    Upload successful
+                {error && (
+                  <div className="animate-fade-in rounded-lg border border-red-300/40 bg-red-500/10 p-3 text-sm text-red-200">
+                    {error}
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Input readOnly value={fullLink} className="h-9 border-emerald-200/30 bg-zinc-950 text-xs text-zinc-200" />
-                    <Button size="icon" onClick={copyToClipboard} className="h-9 w-9 bg-emerald-400 text-zinc-900 hover:bg-emerald-300">
-                      {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-                    </Button>
-                    <a
-                      href={result.link}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className={cn(
-                        buttonVariants({ variant: 'outline', size: 'icon' }),
-                        'h-9 w-9 border-emerald-200/40 bg-transparent text-emerald-100 hover:bg-emerald-500/20'
-                      )}
-                    >
-                      <Download className="h-4 w-4" />
-                    </a>
-                  </div>
-                </div>
-              )}
-            </section>
+                )}
 
-            <section className="md:col-span-2">
-              <div className="rounded-xl border border-zinc-700 bg-zinc-900/65 p-3 md:p-4">
-                <h3 className="text-sm font-semibold text-zinc-100">How it works</h3>
-                <Separator className="my-2 bg-zinc-700" />
-                <div className="space-y-2">
-                  <div className="flex items-start gap-2">
-                    <Badge className="mt-0.5 h-5 w-5 justify-center rounded-full bg-emerald-400 p-0 text-xs text-zinc-900">1</Badge>
-                    <p className="text-xs text-zinc-300">Choose a file from your computer.</p>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <Badge className="mt-0.5 h-5 w-5 justify-center rounded-full bg-emerald-400 p-0 text-xs text-zinc-900">2</Badge>
-                    <p className="text-xs text-zinc-300">Upload it with one click.</p>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <Badge className="mt-0.5 h-5 w-5 justify-center rounded-full bg-emerald-400 p-0 text-xs text-zinc-900">3</Badge>
-                    <p className="text-xs text-zinc-300">Copy your shareable download link.</p>
-                  </div>
-                </div>
-              </div>
+                <Button
+                  className="h-10 w-full bg-emerald-400 text-zinc-900 hover:bg-emerald-300"
+                  onClick={handleUpload}
+                  disabled={!selectedFile || isUploading}
+                >
+                  {isUploading ? (
+                    <>
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      Uploading...
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="mr-2 h-4 w-4" />
+                      Upload file
+                    </>
+                  )}
+                </Button>
 
-              <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3 md:grid-cols-1">
-                <div className="rounded-lg border border-zinc-700 bg-zinc-900/65 p-2">
-                  <div className="mb-1 flex items-center gap-1.5 text-emerald-200">
-                    <Zap className="h-3.5 w-3.5" />
-                    <span className="text-xs font-medium">Fast transfer</span>
+                {result?.success && (
+                  <div className="animate-fade-in space-y-3 rounded-xl border border-emerald-300/40 bg-emerald-500/10 p-4">
+                    <div className="flex items-center gap-2 text-sm font-medium text-emerald-100">
+                      <Check className="h-4 w-4" />
+                      Upload successful
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Input readOnly value={fullLink} className="h-9 border-emerald-200/30 bg-zinc-950 text-xs text-zinc-200" />
+                      <Button size="icon" onClick={copyToClipboard} className="h-9 w-9 bg-emerald-400 text-zinc-900 hover:bg-emerald-300">
+                        {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                      </Button>
+                      <a
+                        href={result.link}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className={cn(
+                          buttonVariants({ variant: 'outline', size: 'icon' }),
+                          'h-9 w-9 border-emerald-200/40 bg-transparent text-emerald-100 hover:bg-emerald-500/20'
+                        )}
+                      >
+                        <Download className="h-4 w-4" />
+                      </a>
+                    </div>
                   </div>
-                  <p className="text-xs text-zinc-400">Optimized upload flow for quick sharing.</p>
-                </div>
-                <div className="rounded-lg border border-zinc-700 bg-zinc-900/65 p-2">
-                  <div className="mb-1 flex items-center gap-1.5 text-emerald-200">
-                    <LinkIcon className="h-3.5 w-3.5" />
-                    <span className="text-xs font-medium">Direct links</span>
+                )}
+              </section>
+
+              <section className="md:col-span-2">
+                <div className="rounded-xl border border-zinc-700 bg-zinc-900/65 p-3 md:p-4">
+                  <h3 className="text-sm font-semibold text-zinc-100">How it works</h3>
+                  <Separator className="my-2 bg-zinc-700" />
+                  <div className="space-y-2">
+                    <div className="flex items-start gap-2">
+                      <Badge className="mt-0.5 h-5 w-5 justify-center rounded-full bg-emerald-400 p-0 text-xs text-zinc-900">1</Badge>
+                      <p className="text-xs text-zinc-300">Choose a file from your computer.</p>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <Badge className="mt-0.5 h-5 w-5 justify-center rounded-full bg-emerald-400 p-0 text-xs text-zinc-900">2</Badge>
+                      <p className="text-xs text-zinc-300">Upload it with one click.</p>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <Badge className="mt-0.5 h-5 w-5 justify-center rounded-full bg-emerald-400 p-0 text-xs text-zinc-900">3</Badge>
+                      <p className="text-xs text-zinc-300">Copy your shareable download link.</p>
+                    </div>
                   </div>
-                  <p className="text-xs text-zinc-400">Get a clean link right after upload.</p>
                 </div>
-                <div className="rounded-lg border border-zinc-700 bg-zinc-900/65 p-2">
-                  <div className="mb-1 flex items-center gap-1.5 text-emerald-200">
-                    <Shield className="h-3.5 w-3.5" />
-                    <span className="text-xs font-medium">Simple + safe</span>
+
+                <div className="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-3 md:grid-cols-1">
+                  <div className="rounded-lg border border-zinc-700 bg-zinc-900/65 p-2">
+                    <div className="mb-1 flex items-center gap-1.5 text-emerald-200">
+                      <Zap className="h-3.5 w-3.5" />
+                      <span className="text-xs font-medium">Fast transfer</span>
+                    </div>
+                    <p className="text-xs text-zinc-400">Optimized upload flow for quick sharing.</p>
                   </div>
-                  <p className="text-xs text-zinc-400">No account required to share files.</p>
+                  <div className="rounded-lg border border-zinc-700 bg-zinc-900/65 p-2">
+                    <div className="mb-1 flex items-center gap-1.5 text-emerald-200">
+                      <LinkIcon className="h-3.5 w-3.5" />
+                      <span className="text-xs font-medium">Direct links</span>
+                    </div>
+                    <p className="text-xs text-zinc-400">Get a clean link right after upload.</p>
+                  </div>
+                  <div className="rounded-lg border border-zinc-700 bg-zinc-900/65 p-2">
+                    <div className="mb-1 flex items-center gap-1.5 text-emerald-200">
+                      <Shield className="h-3.5 w-3.5" />
+                      <span className="text-xs font-medium">Simple + safe</span>
+                    </div>
+                    <p className="text-xs text-zinc-400">No account required to share files.</p>
+                  </div>
                 </div>
-              </div>
-            </section>
-          </CardContent>
+              </section>
+            </CardContent>
+          ) : (
+            <CardContent className="p-4 md:p-6">
+              <WebRTCTransfer onUseClassic={() => setMode('classic')} />
+            </CardContent>
+          )}
 
           <CardFooter className="justify-between border-t border-zinc-700 px-4 py-3 text-xs text-zinc-400 md:px-6">
-            <span className='text-emerald-200'>Packet Post</span>
-            <span>Built with Next.js, Tailwind, Shadcn and Lot's of Coffee</span>
-            {/* credit to the creator */}
-            <span>Created by <a href="https://github.com/atomic-panda/file-share"> <span className='text-emerald-200'> Atomic Panda</span></a></span>
+            <span className="text-emerald-200">Packet Post</span>
+            <span>Built with Lot&apos;s of Coffee</span>
+            <span>
+              Created by{' '}
+              <a href="https://github.com/atomic-panda/file-share">
+                <span className="text-emerald-200">Atomic Panda</span>
+              </a>
+            </span>
           </CardFooter>
         </Card>
       </div>
