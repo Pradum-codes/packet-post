@@ -86,3 +86,98 @@ export type JoinTransferResponse = {
   session: TransferSessionPublic;
   receiverToken: string;
 };
+
+export type IceServerConfig = {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+};
+
+export type TransferConfigResponse = {
+  success: true;
+  iceServers: IceServerConfig[];
+};
+
+export type SignalPayload =
+  | {
+      type: 'offer';
+      payload: { sdp: string };
+    }
+  | {
+      type: 'answer';
+      payload: { sdp: string };
+    }
+  | {
+      type: 'ice-candidate';
+      payload: {
+        candidate: string;
+        sdpMid: string | null;
+        sdpMLineIndex: number | null;
+        usernameFragment?: string | null;
+      };
+    }
+  | {
+      type: 'ready';
+      payload?: { note?: string };
+    }
+  | {
+      type: 'cancel';
+      payload?: { reason?: string };
+    }
+  | {
+      type: 'error';
+      payload: { code: string; message: string };
+    };
+
+export type SignalingClientMessage =
+  | {
+      type: 'join-room';
+      transferId: string;
+      role: PeerRole;
+      token: string;
+    }
+  | {
+      type: 'relay';
+      transferId: string;
+      role: PeerRole;
+      token: string;
+      signal: SignalPayload;
+    }
+  | {
+      type: 'leave-room';
+      transferId: string;
+      role: PeerRole;
+      token: string;
+    };
+
+export type SignalingServerMessage =
+  | {
+      type: 'joined-room';
+      transferId: string;
+      role: PeerRole;
+      peerPresent: boolean;
+    }
+  | {
+      type: 'peer-joined';
+      transferId: string;
+      role: PeerRole;
+      peerRole: PeerRole;
+    }
+  | {
+      type: 'peer-left';
+      transferId: string;
+      role: PeerRole;
+      peerRole: PeerRole;
+    }
+  | {
+      type: 'relay';
+      transferId: string;
+      role: PeerRole;
+      from: PeerRole;
+      signal: SignalPayload;
+    }
+  | {
+      type: 'error';
+      code: string;
+      message: string;
+    };

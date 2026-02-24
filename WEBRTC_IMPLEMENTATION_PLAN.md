@@ -113,6 +113,13 @@ Use one reliable ordered data channel (initially):
 - Metrics/logging.
 - Abuse controls and tighter validation.
 
+## Implementation Status (Current)
+- Phase 1: Completed
+- Phase 2: Completed
+- Phase 3: Completed (WebSocket signaling server + UI signaling wiring)
+- Phase 4: Completed (SDP/ICE + RTCDataChannel chunk transfer + sender fallback upload)
+- Phase 5: Completed (ICE config endpoint, retry path, metrics, and abuse/rate-limit validation)
+
 ## File-Level Implementation Map
 - Existing:
   - `app/components/FileUpload.tsx` (main UI)

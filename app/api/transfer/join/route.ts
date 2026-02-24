@@ -1,10 +1,35 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { JoinTransferRequest, JoinTransferResponse } from '@/lib/webrtc/protocol';
+import { getClientIp } from '@/lib/webrtc/network';
+import { consumeRateLimit, pruneRateLimitStore } from '@/lib/webrtc/rateLimit';
 import { joinTransferSession, toPublicSession } from '@/lib/webrtc/sessionStore';
 
 export const runtime = 'nodejs';
 
+const DEFAULT_JOIN_PER_MIN = 60;
+
+function readJoinLimit() {
+  const fromEnv = Number(process.env.WEBRTC_JOIN_RATE_LIMIT_PER_MIN);
+  if (!Number.isFinite(fromEnv) || fromEnv <= 0) {
+    return DEFAULT_JOIN_PER_MIN;
+  }
+  return Math.floor(fromEnv);
+}
+
 export async function POST(request: NextRequest) {
+  pruneRateLimitStore();
+  const ip = getClientIp(request);
+  const rate = consumeRateLimit(`join:${ip}`, readJoinLimit(), 60 * 1000);
+  if (!rate.allowed) {
+    return NextResponse.json(
+      { success: false, message: 'Too many join requests. Please retry shortly.' },
+      {
+        status: 429,
+        headers: { 'retry-after': `${Math.ceil(rate.retryAfterMs / 1000)}` },
+      }
+    );
+  }
+
   let body: JoinTransferRequest;
 
   try {
@@ -16,6 +41,9 @@ export async function POST(request: NextRequest) {
   const transferCode = typeof body.transferCode === 'string' ? body.transferCode.trim().toUpperCase() : '';
   if (!transferCode) {
     return NextResponse.json({ success: false, message: 'transferCode is required' }, { status: 400 });
+  }
+  if (!/^[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(transferCode)) {
+    return NextResponse.json({ success: false, message: 'transferCode must match ABCD-EFGH format' }, { status: 400 });
   }
 
   const joined = joinTransferSession(transferCode);

@@ -1,12 +1,20 @@
 'use client';
 
-import { ChangeEvent, useMemo, useState } from 'react';
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Check, Copy, Loader2, Radio, TriangleAlert, Users } from 'lucide-react';
-import { CreateTransferResponse, JoinTransferResponse } from '@/lib/webrtc/protocol';
+import {
+  CreateTransferResponse,
+  JoinTransferResponse,
+  PeerRole,
+  SignalPayload,
+  SignalingClientMessage,
+  SignalingServerMessage,
+  TransferConfigResponse,
+} from '@/lib/webrtc/protocol';
 
 type TransferRole = 'sender' | 'receiver';
 
@@ -20,6 +28,26 @@ type TransferStatus =
   | 'transferring'
   | 'completed'
   | 'failed';
+
+type SignalingCreds = {
+  transferId: string;
+  token: string;
+  role: PeerRole;
+};
+
+type UploadFallbackResult = {
+  link: string;
+  filename: string;
+  size: number;
+};
+
+type IncomingFileState = {
+  name: string;
+  mimeType: string;
+  size: number;
+  received: number;
+  chunks: BlobPart[];
+};
 
 type Props = {
   onUseClassic: () => void;
@@ -48,6 +76,23 @@ function statusLabel(status: TransferStatus) {
   }
 }
 
+function defaultSignalingUrl() {
+  if (typeof window === 'undefined') {
+    return 'ws://127.0.0.1:3001';
+  }
+
+  const protocol = window.location.protocol === 'https:' ? 'wss' : 'ws';
+  return `${protocol}://${window.location.hostname}:3001`;
+}
+
+function formatBytes(bytes: number) {
+  if (!bytes) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  const level = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  const value = bytes / Math.pow(1024, level);
+  return `${value.toFixed(level > 1 ? 2 : 0)} ${units[level]}`;
+}
+
 export default function WebRTCTransfer({ onUseClassic }: Props) {
   const [role, setRole] = useState<TransferRole>('sender');
   const [status, setStatus] = useState<TransferStatus>('idle');
@@ -56,7 +101,30 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
   const [joinCode, setJoinCode] = useState('');
   const [error, setError] = useState('');
   const [copied, setCopied] = useState(false);
-  const [progress] = useState(0);
+  const [socketState, setSocketState] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+  const [progress, setProgress] = useState(0);
+  const [bytesDone, setBytesDone] = useState(0);
+  const [bytesTotal, setBytesTotal] = useState(0);
+  const [fallbackResult, setFallbackResult] = useState<UploadFallbackResult | null>(null);
+  const [fallbackUploading, setFallbackUploading] = useState(false);
+  const [fallbackCopied, setFallbackCopied] = useState(false);
+  const [origin, setOrigin] = useState('');
+  const [iceServers, setIceServers] = useState<RTCIceServer[]>([{ urls: 'stun:stun.l.google.com:19302' }]);
+  const [reconnectAttempt, setReconnectAttempt] = useState(0);
+
+  const wsRef = useRef<WebSocket | null>(null);
+  const credsRef = useRef<SignalingCreds | null>(null);
+  const pcRef = useRef<RTCPeerConnection | null>(null);
+  const dataChannelRef = useRef<RTCDataChannel | null>(null);
+  const incomingRef = useRef<IncomingFileState | null>(null);
+  const connectTimeoutRef = useRef<number | null>(null);
+  const offerSentRef = useRef(false);
+  const transferStartedRef = useRef(false);
+  const fallbackAttemptedRef = useRef(false);
+  const manualSocketCloseRef = useRef(false);
+  const reconnectTimerRef = useRef<number | null>(null);
+  const reconnectAttemptRef = useRef(0);
+  const statusRef = useRef<TransferStatus>('idle');
 
   const canCreate = role === 'sender' && !!selectedFile && status !== 'creating-session';
   const canJoin = role === 'receiver' && !!joinCode.trim() && status !== 'joining-session';
@@ -81,11 +149,617 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
     return <Radio className="h-4 w-4" />;
   }, [status]);
 
+  useEffect(() => {
+    statusRef.current = status;
+  }, [status]);
+
+  const clearConnectTimeout = () => {
+    if (connectTimeoutRef.current) {
+      window.clearTimeout(connectTimeoutRef.current);
+      connectTimeoutRef.current = null;
+    }
+  };
+
+  const clearReconnectTimer = () => {
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  };
+
+  const resetTransferState = () => {
+    incomingRef.current = null;
+    offerSentRef.current = false;
+    transferStartedRef.current = false;
+    fallbackAttemptedRef.current = false;
+    setProgress(0);
+    setBytesDone(0);
+    setBytesTotal(0);
+    setFallbackResult(null);
+    setFallbackUploading(false);
+    setFallbackCopied(false);
+  };
+
+  const closePeerConnection = () => {
+    clearConnectTimeout();
+    if (dataChannelRef.current) {
+      dataChannelRef.current.close();
+      dataChannelRef.current = null;
+    }
+    if (pcRef.current) {
+      pcRef.current.close();
+      pcRef.current = null;
+    }
+  };
+
+  const closeSignalingSocket = () => {
+    const ws = wsRef.current;
+    const creds = credsRef.current;
+
+    manualSocketCloseRef.current = true;
+    clearReconnectTimer();
+
+    if (ws && ws.readyState === WebSocket.OPEN && creds) {
+      const leaveMsg: SignalingClientMessage = {
+        type: 'leave-room',
+        transferId: creds.transferId,
+        role: creds.role,
+        token: creds.token,
+      };
+      ws.send(JSON.stringify(leaveMsg));
+    }
+
+    if (ws) {
+      ws.close();
+    }
+
+    wsRef.current = null;
+    setSocketState('disconnected');
+  };
+
+  const fallbackToUpload = async (reason: string) => {
+    if (role !== 'sender' || !selectedFile || fallbackAttemptedRef.current) {
+      return;
+    }
+
+    fallbackAttemptedRef.current = true;
+    setFallbackUploading(true);
+    setError(`${reason} Falling back to classic upload.`);
+
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+
+    try {
+      const response = await fetch('/api/upload', { method: 'POST', body: formData });
+      const data = (await response.json()) as {
+        success?: boolean;
+        link?: string;
+        filename?: string;
+        size?: number;
+        message?: string;
+      };
+
+      if (!response.ok || !data.success || !data.link || !data.filename || typeof data.size !== 'number') {
+        throw new Error(data.message || 'Fallback upload failed.');
+      }
+
+      setFallbackResult({
+        link: data.link,
+        filename: data.filename,
+        size: data.size,
+      });
+    } catch (uploadError) {
+      setError(uploadError instanceof Error ? uploadError.message : 'Fallback upload failed.');
+    } finally {
+      setFallbackUploading(false);
+    }
+  };
+
+  const handleLiveFailure = (message: string) => {
+    setStatus('failed');
+    closePeerConnection();
+    void fallbackToUpload(message);
+  };
+
+  const scheduleReconnect = () => {
+    const creds = credsRef.current;
+    if (!creds || reconnectAttemptRef.current >= 3) {
+      return;
+    }
+
+    clearReconnectTimer();
+    const nextAttempt = reconnectAttemptRef.current + 1;
+    const delay = Math.min(2500 * nextAttempt, 6000);
+    reconnectTimerRef.current = window.setTimeout(() => {
+      reconnectAttemptRef.current = nextAttempt;
+      setReconnectAttempt(nextAttempt);
+      connectSignaling(creds, true);
+    }, delay);
+  };
+
+  const sendSignal = (signal: SignalPayload) => {
+    const ws = wsRef.current;
+    const creds = credsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN || !creds) {
+      return;
+    }
+
+    const msg: SignalingClientMessage = {
+      type: 'relay',
+      transferId: creds.transferId,
+      role: creds.role,
+      token: creds.token,
+      signal,
+    };
+
+    ws.send(JSON.stringify(msg));
+  };
+
+  const sendReadySignal = () => {
+    const roleValue = credsRef.current?.role;
+    if (!roleValue) {
+      return;
+    }
+
+    sendSignal({
+      type: 'ready',
+      payload: {
+        note: `${roleValue}-ready`,
+      },
+    });
+  };
+
+  const waitForBufferLow = (channel: RTCDataChannel) => {
+    if (channel.bufferedAmount <= 1024 * 1024) {
+      return Promise.resolve();
+    }
+
+    return new Promise<void>((resolve) => {
+      const onLow = () => {
+        channel.removeEventListener('bufferedamountlow', onLow);
+        resolve();
+      };
+
+      channel.addEventListener('bufferedamountlow', onLow, { once: true });
+      window.setTimeout(() => {
+        channel.removeEventListener('bufferedamountlow', onLow);
+        resolve();
+      }, 750);
+    });
+  };
+
+  const completeReceiverDownload = () => {
+    const incoming = incomingRef.current;
+    if (!incoming) {
+      return;
+    }
+
+    const blob = new Blob(incoming.chunks, { type: incoming.mimeType || 'application/octet-stream' });
+    const objectUrl = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = objectUrl;
+    anchor.download = incoming.name || 'received-file';
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+
+    setStatus('completed');
+    setProgress(100);
+  };
+
+  const handleIncomingDataMessage = async (data: string | ArrayBuffer | Blob) => {
+    if (typeof data === 'string') {
+      let control:
+        | { kind: 'meta'; name: string; mimeType: string; size: number }
+        | { kind: 'done' }
+        | { kind: 'cancel'; reason?: string };
+
+      try {
+        control = JSON.parse(data) as typeof control;
+      } catch {
+        return;
+      }
+
+      if (control.kind === 'meta') {
+        incomingRef.current = {
+          name: control.name,
+          mimeType: control.mimeType,
+          size: control.size,
+          received: 0,
+          chunks: [],
+        };
+        setBytesTotal(control.size);
+        setBytesDone(0);
+        setProgress(0);
+        setStatus('transferring');
+        return;
+      }
+
+      if (control.kind === 'done') {
+        completeReceiverDownload();
+        return;
+      }
+
+      if (control.kind === 'cancel') {
+        handleLiveFailure(control.reason || 'Sender canceled transfer.');
+      }
+      return;
+    }
+
+    const payload = data instanceof Blob ? await data.arrayBuffer() : data;
+    const incoming = incomingRef.current;
+    if (!incoming) {
+      return;
+    }
+
+    incoming.chunks.push(payload);
+    incoming.received += payload.byteLength;
+
+    const currentProgress = incoming.size > 0 ? Math.min(100, (incoming.received / incoming.size) * 100) : 0;
+    setBytesDone(incoming.received);
+    setProgress(currentProgress);
+  };
+
+  const setupDataChannel = (channel: RTCDataChannel) => {
+    dataChannelRef.current = channel;
+    channel.bufferedAmountLowThreshold = 256 * 1024;
+
+    channel.onopen = () => {
+      clearConnectTimeout();
+      setStatus('connected');
+
+      if (credsRef.current?.role === 'sender' && selectedFile && !transferStartedRef.current) {
+        transferStartedRef.current = true;
+        void (async () => {
+          try {
+            setStatus('transferring');
+            setBytesTotal(selectedFile.size);
+            setBytesDone(0);
+            setProgress(0);
+
+            channel.send(
+              JSON.stringify({
+                kind: 'meta',
+                name: selectedFile.name,
+                mimeType: selectedFile.type || 'application/octet-stream',
+                size: selectedFile.size,
+              })
+            );
+
+            const chunkSize = 64 * 1024;
+            let offset = 0;
+
+            while (offset < selectedFile.size) {
+              if (channel.readyState !== 'open') {
+                throw new Error('Data channel closed during transfer.');
+              }
+
+              const chunk = await selectedFile.slice(offset, offset + chunkSize).arrayBuffer();
+              await waitForBufferLow(channel);
+              channel.send(chunk);
+              offset += chunk.byteLength;
+
+              const pct = Math.min(100, (offset / selectedFile.size) * 100);
+              setBytesDone(offset);
+              setProgress(pct);
+            }
+
+            channel.send(JSON.stringify({ kind: 'done' }));
+            setStatus('completed');
+            setProgress(100);
+          } catch (transferError) {
+            handleLiveFailure(transferError instanceof Error ? transferError.message : 'File transfer failed.');
+          }
+        })();
+      }
+    };
+
+    channel.onclose = () => {
+      if (statusRef.current !== 'completed') {
+        handleLiveFailure('Data channel closed before transfer completed.');
+      }
+    };
+
+    channel.onerror = () => {
+      handleLiveFailure('Data channel error.');
+    };
+
+    channel.onmessage = (event) => {
+      void handleIncomingDataMessage(event.data as string | ArrayBuffer | Blob);
+    };
+  };
+
+  const ensurePeerConnection = () => {
+    if (pcRef.current) {
+      return pcRef.current;
+    }
+
+    const connection = new RTCPeerConnection({ iceServers });
+
+    connection.onicecandidate = (event) => {
+      if (!event.candidate) {
+        return;
+      }
+
+      sendSignal({
+        type: 'ice-candidate',
+        payload: {
+          candidate: event.candidate.candidate,
+          sdpMid: event.candidate.sdpMid,
+          sdpMLineIndex: event.candidate.sdpMLineIndex,
+          usernameFragment: event.candidate.usernameFragment,
+        },
+      });
+    };
+
+    connection.ondatachannel = (event) => {
+      setupDataChannel(event.channel);
+    };
+
+    connection.onconnectionstatechange = () => {
+      const nextState = connection.connectionState;
+      if (nextState === 'connected') {
+        clearConnectTimeout();
+        if (statusRef.current !== 'transferring' && statusRef.current !== 'completed') {
+          setStatus('connected');
+        }
+        return;
+      }
+
+      if (nextState === 'failed' || nextState === 'disconnected') {
+        handleLiveFailure('Peer connection failed.');
+      }
+    };
+
+    pcRef.current = connection;
+
+    if (credsRef.current?.role === 'sender') {
+      const dc = connection.createDataChannel('file-transfer', { ordered: true });
+      setupDataChannel(dc);
+    }
+
+    return connection;
+  };
+
+  const startConnectionTimeout = () => {
+    clearConnectTimeout();
+    connectTimeoutRef.current = window.setTimeout(() => {
+      handleLiveFailure('Live connection timed out.');
+    }, 15000);
+  };
+
+  const startSenderOffer = async () => {
+    if (offerSentRef.current || credsRef.current?.role !== 'sender') {
+      return;
+    }
+
+    const connection = ensurePeerConnection();
+    offerSentRef.current = true;
+
+    try {
+      startConnectionTimeout();
+      const offer = await connection.createOffer();
+      await connection.setLocalDescription(offer);
+      if (!offer.sdp) {
+        throw new Error('Failed to create SDP offer.');
+      }
+
+      sendSignal({
+        type: 'offer',
+        payload: { sdp: offer.sdp },
+      });
+    } catch (offerError) {
+      handleLiveFailure(offerError instanceof Error ? offerError.message : 'Could not create offer.');
+    }
+  };
+
+  const handleRelaySignal = async (signal: SignalPayload) => {
+    if (signal.type === 'ready') {
+      if (credsRef.current?.role === 'sender') {
+        await startSenderOffer();
+      }
+      return;
+    }
+
+    if (signal.type === 'offer') {
+      const offerSignal = signal as Extract<SignalPayload, { type: 'offer' }>;
+      if (credsRef.current?.role !== 'receiver') {
+        return;
+      }
+
+      try {
+        startConnectionTimeout();
+        const connection = ensurePeerConnection();
+        await connection.setRemoteDescription({ type: 'offer', sdp: offerSignal.payload.sdp });
+        const answer = await connection.createAnswer();
+        await connection.setLocalDescription(answer);
+        if (!answer.sdp) {
+          throw new Error('Failed to create SDP answer.');
+        }
+
+        sendSignal({
+          type: 'answer',
+          payload: { sdp: answer.sdp },
+        });
+      } catch (offerHandlingError) {
+        handleLiveFailure(offerHandlingError instanceof Error ? offerHandlingError.message : 'Could not process offer.');
+      }
+      return;
+    }
+
+    if (signal.type === 'answer') {
+      const answerSignal = signal as Extract<SignalPayload, { type: 'answer' }>;
+      if (credsRef.current?.role !== 'sender') {
+        return;
+      }
+
+      try {
+        const connection = ensurePeerConnection();
+        await connection.setRemoteDescription({ type: 'answer', sdp: answerSignal.payload.sdp });
+      } catch (answerHandlingError) {
+        handleLiveFailure(answerHandlingError instanceof Error ? answerHandlingError.message : 'Could not process answer.');
+      }
+      return;
+    }
+
+    if (signal.type === 'ice-candidate') {
+      const iceSignal = signal as Extract<SignalPayload, { type: 'ice-candidate' }>;
+      try {
+        const connection = ensurePeerConnection();
+        await connection.addIceCandidate({
+          candidate: iceSignal.payload.candidate,
+          sdpMid: iceSignal.payload.sdpMid,
+          sdpMLineIndex: iceSignal.payload.sdpMLineIndex,
+          usernameFragment: iceSignal.payload.usernameFragment ?? undefined,
+        });
+      } catch (iceError) {
+        handleLiveFailure(iceError instanceof Error ? iceError.message : 'Could not process ICE candidate.');
+      }
+      return;
+    }
+
+    if (signal.type === 'cancel') {
+      const cancelSignal = signal as Extract<SignalPayload, { type: 'cancel' }>;
+      handleLiveFailure(cancelSignal.payload?.reason || 'Peer canceled transfer.');
+      return;
+    }
+
+    if (signal.type === 'error') {
+      const errorSignal = signal as Extract<SignalPayload, { type: 'error' }>;
+      handleLiveFailure(errorSignal.payload.message || 'Peer reported an error.');
+    }
+  };
+
+  const connectSignaling = (creds: SignalingCreds, isReconnect = false) => {
+    closeSignalingSocket();
+    manualSocketCloseRef.current = false;
+    closePeerConnection();
+    if (!isReconnect) {
+      resetTransferState();
+      reconnectAttemptRef.current = 0;
+      setReconnectAttempt(0);
+    }
+    credsRef.current = creds;
+
+    const socketUrl = process.env.NEXT_PUBLIC_SIGNALING_URL || defaultSignalingUrl();
+    const ws = new WebSocket(socketUrl);
+    wsRef.current = ws;
+    setSocketState('connecting');
+
+    ws.onopen = () => {
+      setSocketState('connected');
+      clearReconnectTimer();
+      if (isReconnect) {
+        setStatus('connecting');
+      }
+
+      const joinMsg: SignalingClientMessage = {
+        type: 'join-room',
+        transferId: creds.transferId,
+        role: creds.role,
+        token: creds.token,
+      };
+      ws.send(JSON.stringify(joinMsg));
+    };
+
+    ws.onmessage = (event) => {
+      let message: SignalingServerMessage;
+      try {
+        message = JSON.parse(String(event.data)) as SignalingServerMessage;
+      } catch {
+        return;
+      }
+
+      if (message.type === 'error') {
+        handleLiveFailure(message.message || 'Signaling server error.');
+        return;
+      }
+
+      if (message.type === 'joined-room') {
+        if (message.peerPresent) {
+          setStatus('connecting');
+          startConnectionTimeout();
+          sendReadySignal();
+        } else {
+          setStatus(creds.role === 'sender' ? 'waiting-peer' : 'connecting');
+        }
+        return;
+      }
+
+      if (message.type === 'peer-joined') {
+        setError('');
+        setStatus('connecting');
+        startConnectionTimeout();
+        sendReadySignal();
+        return;
+      }
+
+      if (message.type === 'peer-left') {
+        if (creds.role === 'sender') {
+          setStatus('waiting-peer');
+          setError('Receiver disconnected. Waiting for reconnect.');
+          closePeerConnection();
+          return;
+        }
+
+        handleLiveFailure('Sender disconnected from the signaling session.');
+        return;
+      }
+
+      if (message.type === 'relay') {
+        void handleRelaySignal(message.signal);
+      }
+    };
+
+    ws.onclose = () => {
+      setSocketState('disconnected');
+      wsRef.current = null;
+      if (!manualSocketCloseRef.current && statusRef.current !== 'completed') {
+        scheduleReconnect();
+      }
+    };
+
+    ws.onerror = () => {
+      handleLiveFailure('Could not connect to signaling server. Start signaling service and retry.');
+    };
+  };
+
+  useEffect(() => {
+    setOrigin(window.location.origin);
+    void (async () => {
+      try {
+        const response = await fetch('/api/transfer/config', { method: 'GET' });
+        if (!response.ok) return;
+        const data = (await response.json()) as TransferConfigResponse;
+        if (!data.success || !Array.isArray(data.iceServers) || data.iceServers.length === 0) {
+          return;
+        }
+
+        const normalized = data.iceServers.map((item) => ({
+          urls: item.urls,
+          username: item.username,
+          credential: item.credential,
+        }));
+        setIceServers(normalized);
+      } catch {
+        // Keep default STUN when config endpoint is unavailable.
+      }
+    })();
+
+    return () => {
+      closeSignalingSocket();
+      closePeerConnection();
+      clearReconnectTimer();
+    };
+  }, []);
+
   const handleFileSelect = (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0] || null;
     setSelectedFile(file);
     setError('');
     setStatus('idle');
+    setFallbackResult(null);
   };
 
   const handleCreateTransfer = async () => {
@@ -111,6 +785,11 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
 
       setTransferCode(data.session.transferCode);
       setStatus('waiting-peer');
+      connectSignaling({
+        transferId: data.session.transferId,
+        token: data.senderToken,
+        role: 'sender',
+      });
     } catch (err) {
       setStatus('failed');
       setError(err instanceof Error ? err.message : 'Could not create transfer session.');
@@ -140,7 +819,11 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
 
       setJoinCode(data.session.transferCode);
       setStatus('connecting');
-      window.setTimeout(() => setStatus('connected'), 300);
+      connectSignaling({
+        transferId: data.session.transferId,
+        token: data.receiverToken,
+        role: 'receiver',
+      });
     } catch (err) {
       setStatus('failed');
       setError(err instanceof Error ? err.message : 'Could not join transfer session.');
@@ -158,28 +841,54 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
     }
   };
 
+  const copyFallbackLink = async () => {
+    if (!fallbackResult?.link) {
+      return;
+    }
+
+    const fullLink = `${origin}${fallbackResult.link}`;
+
+    try {
+      await navigator.clipboard.writeText(fullLink);
+      setFallbackCopied(true);
+      setTimeout(() => setFallbackCopied(false), 1400);
+    } catch {
+      setError('Could not copy fallback link to clipboard.');
+    }
+  };
+
+  const resetForRole = (nextRole: TransferRole) => {
+    closeSignalingSocket();
+    closePeerConnection();
+    credsRef.current = null;
+    setRole(nextRole);
+    setError('');
+    setStatus('idle');
+    setTransferCode('');
+    resetTransferState();
+    if (nextRole === 'sender') {
+      setJoinCode('');
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="rounded-xl border border-zinc-700 bg-zinc-900/70 p-3 md:p-4">
         <div className="mb-2 flex items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-zinc-100">Live P2P transfer (WebRTC)</h3>
           <Badge variant="secondary" className="rounded-md bg-cyan-500/15 text-cyan-100">
-            Phase 2: Sessions
+            Phase 5: Hardened
           </Badge>
         </div>
         <p className="text-xs text-zinc-400">
-          Session creation/join APIs are active. Signaling, SDP/ICE exchange, and real byte transfer are in Phase 3+.
+          Live transfer includes signaling validation, retry logic, configurable ICE servers (TURN/STUN), and sender fallback upload.
         </p>
       </div>
 
       <div className="grid gap-3 md:grid-cols-2">
         <button
           type="button"
-          onClick={() => {
-            setRole('sender');
-            setError('');
-            setStatus('idle');
-          }}
+          onClick={() => resetForRole('sender')}
           className={`rounded-xl border p-3 text-left transition ${
             role === 'sender'
               ? 'border-emerald-300/50 bg-emerald-500/10'
@@ -191,11 +900,7 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
         </button>
         <button
           type="button"
-          onClick={() => {
-            setRole('receiver');
-            setError('');
-            setStatus('idle');
-          }}
+          onClick={() => resetForRole('receiver')}
           className={`rounded-xl border p-3 text-left transition ${
             role === 'receiver'
               ? 'border-emerald-300/50 bg-emerald-500/10'
@@ -279,16 +984,54 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
         </div>
         <p className="mt-2 text-xs text-zinc-300">
           {status === 'waiting-peer'
-            ? 'Waiting for receiver to join the transfer code.'
+            ? 'Waiting for receiver to join and establish signaling.'
             : status === 'connected'
-              ? 'Peer connected. Real data channel transfer will be wired in the next phase.'
-              : 'Transfer progress will update here once WebRTC data channel is integrated.'}
+              ? 'Peer connection is up. Data channel ready.'
+              : status === 'transferring'
+                ? 'Transferring file chunks over WebRTC data channel.'
+                : status === 'completed'
+                  ? 'Transfer completed.'
+                  : 'Start by creating or joining a transfer code.'}
         </p>
+        <p className="mt-1 text-[11px] text-zinc-400">Progress: {formatBytes(bytesDone)} / {formatBytes(bytesTotal)}</p>
+        <p className="mt-1 text-[11px] text-zinc-400">Signaling socket: {socketState}</p>
+        {reconnectAttempt > 0 && status !== 'completed' && (
+          <p className="mt-1 text-[11px] text-zinc-400">Reconnect attempts: {reconnectAttempt}/3</p>
+        )}
       </div>
+
+      {fallbackUploading && (
+        <div className="rounded-lg border border-amber-300/30 bg-amber-500/10 p-3 text-xs text-amber-100">
+          Live mode failed. Uploading fallback link...
+        </div>
+      )}
+
+      {fallbackResult && (
+        <div className="rounded-lg border border-emerald-300/30 bg-emerald-500/10 p-3 text-xs text-emerald-100">
+          <p className="font-medium">Fallback upload ready: {fallbackResult.filename} ({formatBytes(fallbackResult.size)})</p>
+          <div className="mt-2 flex gap-2">
+            <Input readOnly value={`${origin}${fallbackResult.link}`} className="h-8 border-zinc-700 bg-zinc-900 text-xs text-zinc-200" />
+            <Button size="icon" onClick={copyFallbackLink} className="h-8 w-8 bg-emerald-400 text-zinc-900 hover:bg-emerald-300">
+              {fallbackCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            </Button>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-lg border border-red-300/30 bg-red-500/10 p-3 text-xs text-red-200">
           {error}
+          {status === 'failed' && credsRef.current && (
+            <div className="mt-2">
+              <Button
+                size="sm"
+                onClick={() => connectSignaling(credsRef.current as SignalingCreds)}
+                className="h-7 bg-red-200 text-red-900 hover:bg-red-100"
+              >
+                Retry live connection
+              </Button>
+            </div>
+          )}
         </div>
       )}
 
@@ -296,7 +1039,7 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 text-xs text-zinc-400">
           <Users className="h-3.5 w-3.5 text-cyan-300" />
-          Fallback remains available if live mode fails.
+          Classic upload remains available as backup.
         </div>
         <Button variant="outline" onClick={onUseClassic} className="h-8 border-zinc-600 text-zinc-200 hover:bg-zinc-800">
           Use classic upload flow
