@@ -3,6 +3,7 @@ import { writeFile, mkdir, readdir, unlink, stat } from 'fs/promises';
 import { join } from 'path';
 import { existsSync } from 'fs';
 import { tmpdir } from 'os';
+import { readMaxUploadBytes } from '@/lib/webrtc/network';
 
 export const runtime = 'nodejs';
 
@@ -47,6 +48,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { success: false, message: 'No file provided' },
         { status: 400 }
+      );
+    }
+    const maxUploadBytes = readMaxUploadBytes();
+    if (file.size > maxUploadBytes) {
+      return NextResponse.json(
+        {
+          success: false,
+          message: `File exceeds server upload limit (${Math.ceil(maxUploadBytes / (1024 * 1024))} MB)`,
+        },
+        { status: 413 }
       );
     }
     

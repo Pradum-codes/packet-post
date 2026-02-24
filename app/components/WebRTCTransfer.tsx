@@ -110,6 +110,7 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
   const [fallbackCopied, setFallbackCopied] = useState(false);
   const [origin, setOrigin] = useState('');
   const [iceServers, setIceServers] = useState<RTCIceServer[]>([{ urls: 'stun:stun.l.google.com:19302' }]);
+  const [maxUploadBytes, setMaxUploadBytes] = useState(25 * 1024 * 1024);
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -219,6 +220,12 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
 
   const fallbackToUpload = async (reason: string) => {
     if (role !== 'sender' || !selectedFile || fallbackAttemptedRef.current) {
+      return;
+    }
+    if (selectedFile.size > maxUploadBytes) {
+      setError(
+        `${reason} Live transfer failed and fallback upload was skipped because file is larger than ${formatBytes(maxUploadBytes)}.`
+      );
       return;
     }
 
@@ -733,6 +740,9 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
         if (!response.ok) return;
         const data = (await response.json()) as TransferConfigResponse;
         if (!data.success || !Array.isArray(data.iceServers) || data.iceServers.length === 0) {
+          if (typeof data.maxUploadBytes === 'number' && Number.isFinite(data.maxUploadBytes) && data.maxUploadBytes > 0) {
+            setMaxUploadBytes(data.maxUploadBytes);
+          }
           return;
         }
 
@@ -742,6 +752,9 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
           credential: item.credential,
         }));
         setIceServers(normalized);
+        if (typeof data.maxUploadBytes === 'number' && Number.isFinite(data.maxUploadBytes) && data.maxUploadBytes > 0) {
+          setMaxUploadBytes(data.maxUploadBytes);
+        }
       } catch {
         // Keep default STUN when config endpoint is unavailable.
       }

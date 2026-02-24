@@ -96,6 +96,7 @@ export type IceServerConfig = {
 export type TransferConfigResponse = {
   success: true;
   iceServers: IceServerConfig[];
+  maxUploadBytes: number;
 };
 
 export type SignalPayload =

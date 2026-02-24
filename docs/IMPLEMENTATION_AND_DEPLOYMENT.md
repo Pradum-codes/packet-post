@@ -114,6 +114,7 @@ See `.env` and `.env.example`.
 Key values:
 - `NEXT_PUBLIC_SIGNALING_URL`
 - `WEBRTC_ICE_SERVERS_JSON`
+- `WEB_UPLOAD_MAX_BYTES`
 - API/signaling rate-limit and safety knobs
 
 ## What users can do today
@@ -127,4 +128,3 @@ Key values:
 3. Optionally add auth/signature between API-issued session tokens and signaling server verification.
 4. Add centralized logging/metrics sink and alerting for signaling and transfer API errors.
 5. Add integration/E2E tests in CI for create/join + signaling + transfer fallback.
-

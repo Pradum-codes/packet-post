@@ -2,6 +2,7 @@ import { NextRequest } from 'next/server';
 import { IceServerConfig } from '@/lib/webrtc/protocol';
 
 const DEFAULT_ICE_SERVERS: IceServerConfig[] = [{ urls: ['stun:stun.l.google.com:19302'] }];
+const DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
 
 export function getClientIp(request: NextRequest) {
   const fromForwarded = request.headers.get('x-forwarded-for');
@@ -45,4 +46,12 @@ export function parseIceServersFromEnv(): IceServerConfig[] {
   } catch {
     return DEFAULT_ICE_SERVERS;
   }
+}
+
+export function readMaxUploadBytes() {
+  const raw = Number(process.env.WEB_UPLOAD_MAX_BYTES);
+  if (!Number.isFinite(raw) || raw <= 0) {
+    return DEFAULT_MAX_UPLOAD_BYTES;
+  }
+  return Math.floor(raw);
 }
