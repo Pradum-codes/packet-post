@@ -271,5 +271,3 @@ app/api/transfer/telemetry/route.ts:12
 lib/webrtc/observability.ts:29
 
 Low: Env appears still local-oriented (NEXT_PUBLIC_APP_URL, NEXT_PUBLIC_SIGNALING_URL present with local-style values), so prod env finalization is still needed.
-.env.local:2
-.env.local:30
