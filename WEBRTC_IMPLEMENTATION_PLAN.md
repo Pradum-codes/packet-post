@@ -120,31 +120,188 @@ Use one reliable ordered data channel (initially):
 - Phase 4: Completed (SDP/ICE + RTCDataChannel chunk transfer + sender fallback upload)
 - Phase 5: Completed (ICE config endpoint, retry path, metrics, and abuse/rate-limit validation)
 
-## File-Level Implementation Map
-- Existing:
-  - `app/components/FileUpload.tsx` (main UI)
-  - `app/api/upload/route.ts` (upload)
-  - `app/api/download/[filename]/route.ts` (download)
-- Planned additions:
-  - `app/components/WebRTCTransfer.tsx` (live transfer interface)
-  - `lib/webrtc/protocol.ts` (message types)
-  - `app/api/transfer/create/route.ts`
-  - `app/api/transfer/join/route.ts`
-  - signaling server module/process (WebSocket)
+## Phase 6: Migration Plan to Supabase (Signaling + Shared Session State)
 
-## Open Decisions
-- Where signaling server runs (inside app process vs separate service).
-- In-memory sessions vs Redis for multi-instance deployment.
-- Max file size allowed for live mode.
-- Whether to support resume/reconnect in v1.
+### Migration Objective
+Move from in-memory session/signaling coordination to Supabase so WebRTC live mode works reliably across multiple app instances and does not depend on a dedicated local `server/signaling.cjs` process.
+
+### What Will Change
+- Replace `lib/webrtc/sessionStore.ts` in-memory persistence with Supabase Postgres tables.
+- Replace WebSocket signaling transport (`server/signaling.cjs`) with Supabase Realtime channels.
+- Keep the current WebRTC data channel transfer logic and fallback upload logic in `app/components/WebRTCTransfer.tsx`.
+- Keep existing `/api/upload` and `/api/download` flows unchanged.
+
+### Target Architecture
+1. Next.js API routes continue creating/joining sessions.
+2. API routes use Supabase server client (service role key) to read/write transfer session rows.
+3. Browser clients subscribe to a Supabase Realtime channel per `transferId` for signaling messages (`offer`, `answer`, `ice-candidate`, `ready`, `cancel`, `error`).
+4. Session validity, single-receiver join semantics, and token checks are enforced by DB constraints + transactional route logic.
+5. Existing client state machine (connecting/transferring/fallback) remains the control plane.
+
+### Proposed Supabase Data Model
+Use Postgres as source of truth for session lifecycle.
+
+```sql
+create table webrtc_transfer_sessions (
+  transfer_id uuid primary key default gen_random_uuid(),
+  transfer_code text not null unique,
+  sender_token text not null,
+  receiver_token text unique,
+  state text not null check (state in ('created','joined','closed','expired')),
+  created_at timestamptz not null default now(),
+  expires_at timestamptz not null
+);
+
+create index webrtc_transfer_sessions_expires_at_idx
+  on webrtc_transfer_sessions (expires_at);
+```
+
+Optional (if you want DB-backed observability/audit):
+
+```sql
+create table webrtc_signaling_events (
+  id bigint generated always as identity primary key,
+  transfer_id uuid not null references webrtc_transfer_sessions(transfer_id) on delete cascade,
+  from_role text not null check (from_role in ('sender','receiver')),
+  event_type text not null,
+  payload jsonb not null,
+  created_at timestamptz not null default now()
+);
+```
+
+### API Refactor Plan
+Keep endpoint contracts stable to avoid UI rewrites.
+
+- `POST /api/transfer/create`
+  - Generate `transfer_code`, `sender_token`, `expires_at`.
+  - Insert row in `webrtc_transfer_sessions`.
+  - Return current response shape unchanged.
+
+- `POST /api/transfer/join`
+  - Validate transfer code format and TTL.
+  - Transactionally set `receiver_token` and `state='joined'` only when receiver is empty and not expired.
+  - Return current response shape unchanged.
+
+- New optional endpoint: `POST /api/transfer/close`
+  - Marks session `closed` after successful transfer/cancel.
+  - Improves cleanup and reduces stale joins.
+
+- Cleanup job
+  - Scheduled SQL or cron to mark/delete expired sessions.
+  - Also remove stale signaling records if `webrtc_signaling_events` is used.
+
+### Client Signaling Refactor Plan
+In `app/components/WebRTCTransfer.tsx`:
+- Replace raw `WebSocket` lifecycle (`join-room`, `relay`, `leave-room`) with Supabase Realtime channel subscribe/unsubscribe.
+- Publish signaling payloads as channel events with the same typed `SignalPayload`.
+- Filter incoming events by `transferId` and ignore self-originated events.
+- Keep existing peer connection creation, data channel chunking, progress, and fallback paths unchanged.
+
+### Security and Abuse Controls in Supabase
+- Enable RLS on `webrtc_transfer_sessions`.
+- Prefer server-side access via service role from Next.js routes; do not expose service role in browser.
+- If direct client DB access is ever added, enforce row-level checks keyed by sender/receiver token and expiry.
+- Keep API rate-limit behavior; migrate in-memory limiter to shared store later (Redis/Supabase-backed) if needed.
+- Keep payload size/type validation in client and route boundary before publishing signaling messages.
+
+### Environment and Config Changes
+Add:
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_DB_SCHEMA` (optional, default `public`)
+
+Deprecate after cutover:
+- `NEXT_PUBLIC_SIGNALING_URL`
+- `SIGNALING_HOST`
+- `SIGNALING_PORT`
+- `SIGNALING_MAX_MESSAGE_BYTES`
+- `SIGNALING_MAX_MESSAGES_PER_10S`
+- `SIGNALING_ROOM_IDLE_TTL_MS`
+- `SIGNALING_LOG_EVENTS`
+
+### Execution Phases
+
+### Phase 6.1: Foundation
+- Add Supabase client utilities (server + browser).
+- Add migration SQL for session table.
+- Add env plumbing and validation.
+- Exit criteria: local create/join can read/write sessions from Supabase.
+
+### Phase 6.2: API Cutover
+- Refactor `transfer/create` and `transfer/join` routes to Supabase.
+- Keep existing response contracts.
+- Exit criteria: no usage of `lib/webrtc/sessionStore.ts` in runtime path.
+
+### Phase 6.3: Signaling Transport Cutover
+- Replace WebSocket signaling path in `WebRTCTransfer.tsx` with Supabase Realtime channel events.
+- Maintain reconnect behavior and error states.
+- Exit criteria: end-to-end sender/receiver connection succeeds without `server/signaling.cjs`.
+
+### Phase 6.4: Cleanup and Hardening
+- Remove unused signaling server runtime/script.
+- Update docs and `.env.example`.
+- Add metrics/logging hooks for create/join failure and signaling delivery failures.
+- Exit criteria: production config no longer requires custom signaling service.
+
+### Rollout Strategy
+1. Ship behind a feature flag: `WEBRTC_SIGNALING_PROVIDER=ws|supabase`.
+2. Internal test on Supabase path first (classic upload unaffected).
+3. Gradually ramp traffic to Supabase signaling.
+4. Keep WebSocket implementation available for fast rollback until stability is proven.
+
+### Rollback Plan
+- Toggle `WEBRTC_SIGNALING_PROVIDER=ws`.
+- Restore `NEXT_PUBLIC_SIGNALING_URL` runtime config.
+- Leave Supabase tables intact (no destructive rollback needed).
+
+### Risks and Mitigations
+- Realtime delivery ordering differences:
+  - Mitigation: keep SDP/ICE idempotent handlers and strict message validation.
+- Token leakage risk in client events:
+  - Mitigation: never publish service keys; avoid embedding long-lived secrets in channel payloads.
+- Expired session race conditions:
+  - Mitigation: enforce expiry/state checks in transactional join update.
+
+### Validation Checklist
+- Sender can create session and receive code.
+- Receiver can join exactly once per code.
+- Offer/answer/ICE exchange works over Supabase Realtime.
+- File transfer completion unchanged.
+- Fallback upload still triggers on connection failure.
+- Multi-instance deployment works consistently for create/join.
+
+## Migration Impact Map
+- Keep as-is:
+  - `app/components/FileUpload.tsx` (classic mode UI)
+  - `app/api/upload/route.ts` (classic upload)
+  - `app/api/download/[filename]/route.ts` (classic download)
+  - `lib/webrtc/protocol.ts` (signaling payload contracts)
+- Refactor:
+  - `app/components/WebRTCTransfer.tsx` (WebSocket transport to Supabase Realtime transport)
+  - `app/api/transfer/create/route.ts` (in-memory store to Supabase persistence)
+  - `app/api/transfer/join/route.ts` (in-memory store to Supabase persistence)
+- Remove after cutover:
+  - `server/signaling.cjs`
+  - `npm run signal` script in `package.json`
+  - signaling-specific env vars in `.env.example`
+- Add:
+  - Supabase client utilities under `lib/` (server + browser)
+  - SQL migrations for transfer session table (and optional signaling audit table)
+
+## Remaining Decisions
+- Keep signaling payloads ephemeral-only in Realtime channels vs persist signaling events in Postgres for audits.
+- Final TTL policy for sessions (fixed 15 min vs caller-configurable within a bounded range).
+- Whether to add `transfer/close` endpoint immediately or defer to cleanup-on-expiry in first cut.
+- Whether to migrate rate limiting to a shared backend in the same release or as Phase 6.5.
 
 ## Testing Plan
 - Unit:
   - protocol encode/decode validation
-  - session token/TTL logic
+  - session token/TTL logic against Supabase-backed records
 - Integration:
-  - create/join flow
-  - signaling handshake exchange
+  - create/join flow against database transactions
+  - signaling handshake exchange over Supabase Realtime
 - Browser E2E:
   - sender/receiver successful transfer
   - fallback path when P2P fails
