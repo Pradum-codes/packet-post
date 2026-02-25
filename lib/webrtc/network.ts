@@ -3,6 +3,9 @@ import { IceServerConfig } from '@/lib/webrtc/protocol';
 
 const DEFAULT_ICE_SERVERS: IceServerConfig[] = [{ urls: ['stun:stun.l.google.com:19302'] }];
 const DEFAULT_MAX_UPLOAD_BYTES = 25 * 1024 * 1024;
+const DEFAULT_SIGNALING_PROVIDER = 'ws';
+
+export type SignalingProvider = 'ws' | 'supabase';
 
 export function getClientIp(request: NextRequest) {
   const fromForwarded = request.headers.get('x-forwarded-for');
@@ -54,4 +57,9 @@ export function readMaxUploadBytes() {
     return DEFAULT_MAX_UPLOAD_BYTES;
   }
   return Math.floor(raw);
+}
+
+export function readSignalingProvider(): SignalingProvider {
+  const raw = (process.env.WEBRTC_SIGNALING_PROVIDER || DEFAULT_SIGNALING_PROVIDER).toLowerCase();
+  return raw === 'supabase' ? 'supabase' : 'ws';
 }

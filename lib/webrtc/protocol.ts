@@ -93,10 +93,13 @@ export type IceServerConfig = {
   credential?: string;
 };
 
+export type SignalingProvider = 'ws' | 'supabase';
+
 export type TransferConfigResponse = {
   success: true;
   iceServers: IceServerConfig[];
   maxUploadBytes: number;
+  signalingProvider: SignalingProvider;
 };
 
 export type SignalPayload =

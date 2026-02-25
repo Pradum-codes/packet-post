@@ -255,3 +255,21 @@ This project is open source and available under the [MIT License](LICENSE).
 ---
 
 **🔐 Privacy-First File Sharing - Your files, your server, your control.**
+
+
+### Prnding Work:
+High: Production build currently fails due remote Google Font fetch. next build errors on next/font fetching Roboto Mono, which blocks deploy in restricted/no-egress build environments.
+app/layout.tsx:2
+
+Medium: Rate limiting is process-memory only, so it won’t hold across multiple instances/restarts (weak anti-abuse in real production).
+lib/webrtc/rateLimit.ts:12
+docs/IMPLEMENTATION_AND_DEPLOYMENT.md:71
+
+Medium: Metrics/telemetry are in-memory and unauthenticated endpoints; useful for dev, but not strong for production observability/security.
+app/api/transfer/metrics/route.ts:6
+app/api/transfer/telemetry/route.ts:12
+lib/webrtc/observability.ts:29
+
+Low: Env appears still local-oriented (NEXT_PUBLIC_APP_URL, NEXT_PUBLIC_SIGNALING_URL present with local-style values), so prod env finalization is still needed.
+.env.local:2
+.env.local:30

@@ -227,22 +227,26 @@ Deprecate after cutover:
 - Add migration SQL for session table.
 - Add env plumbing and validation.
 - Exit criteria: local create/join can read/write sessions from Supabase.
+Status: Completed.
 
 ### Phase 6.2: API Cutover
 - Refactor `transfer/create` and `transfer/join` routes to Supabase.
 - Keep existing response contracts.
 - Exit criteria: no usage of `lib/webrtc/sessionStore.ts` in runtime path.
+Status: Completed.
 
 ### Phase 6.3: Signaling Transport Cutover
 - Replace WebSocket signaling path in `WebRTCTransfer.tsx` with Supabase Realtime channel events.
 - Maintain reconnect behavior and error states.
 - Exit criteria: end-to-end sender/receiver connection succeeds without `server/signaling.cjs`.
+Status: Completed.
 
 ### Phase 6.4: Cleanup and Hardening
 - Remove unused signaling server runtime/script.
 - Update docs and `.env.example`.
 - Add metrics/logging hooks for create/join failure and signaling delivery failures.
 - Exit criteria: production config no longer requires custom signaling service.
+Status: Completed.
 
 ### Rollout Strategy
 1. Ship behind a feature flag: `WEBRTC_SIGNALING_PROVIDER=ws|supabase`.
@@ -281,10 +285,10 @@ Deprecate after cutover:
   - `app/components/WebRTCTransfer.tsx` (WebSocket transport to Supabase Realtime transport)
   - `app/api/transfer/create/route.ts` (in-memory store to Supabase persistence)
   - `app/api/transfer/join/route.ts` (in-memory store to Supabase persistence)
-- Remove after cutover:
+- Removed in Phase 6.4:
   - `server/signaling.cjs`
   - `npm run signal` script in `package.json`
-  - signaling-specific env vars in `.env.example`
+  - signaling server bind/hardening env vars in `.env.example`
 - Add:
   - Supabase client utilities under `lib/` (server + browser)
   - SQL migrations for transfer session table (and optional signaling audit table)

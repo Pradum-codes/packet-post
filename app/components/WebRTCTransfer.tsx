@@ -1,17 +1,20 @@
 'use client';
 
 import { ChangeEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { RealtimeChannel } from '@supabase/supabase-js';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Separator } from '@/components/ui/separator';
 import { Check, Copy, Loader2, Radio, TriangleAlert, Users } from 'lucide-react';
+import { getSupabaseBrowserClient } from '@/lib/supabase/browser';
 import {
   CreateTransferResponse,
   JoinTransferResponse,
   PeerRole,
   SignalPayload,
   SignalingClientMessage,
+  SignalingProvider,
   SignalingServerMessage,
   TransferConfigResponse,
 } from '@/lib/webrtc/protocol';
@@ -40,6 +43,15 @@ type UploadFallbackResult = {
   filename: string;
   size: number;
 };
+
+type SupabaseSignalEnvelope = {
+  transferId: string;
+  role: PeerRole;
+  token: string;
+  signal: SignalPayload;
+};
+
+type SignalingTelemetryEvent = 'signaling-delivery-success' | 'signaling-delivery-failure';
 
 type IncomingFileState = {
   name: string;
@@ -111,9 +123,11 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
   const [origin, setOrigin] = useState('');
   const [iceServers, setIceServers] = useState<RTCIceServer[]>([{ urls: 'stun:stun.l.google.com:19302' }]);
   const [maxUploadBytes, setMaxUploadBytes] = useState(25 * 1024 * 1024);
+  const [signalingProvider, setSignalingProvider] = useState<SignalingProvider>('ws');
   const [reconnectAttempt, setReconnectAttempt] = useState(0);
 
   const wsRef = useRef<WebSocket | null>(null);
+  const supabaseChannelRef = useRef<RealtimeChannel | null>(null);
   const credsRef = useRef<SignalingCreds | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
   const dataChannelRef = useRef<RTCDataChannel | null>(null);
@@ -195,7 +209,9 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
 
   const closeSignalingSocket = () => {
     const ws = wsRef.current;
+    const channel = supabaseChannelRef.current;
     const creds = credsRef.current;
+    const supabase = getSupabaseBrowserClient();
 
     manualSocketCloseRef.current = true;
     clearReconnectTimer();
@@ -215,6 +231,11 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
     }
 
     wsRef.current = null;
+    if (channel && supabase) {
+      void channel.unsubscribe();
+      void supabase.removeChannel(channel);
+    }
+    supabaseChannelRef.current = null;
     setSocketState('disconnected');
   };
 
@@ -284,10 +305,65 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
     }, delay);
   };
 
+  const reportSignalingTelemetry = (event: SignalingTelemetryEvent, reason?: string) => {
+    const payload = JSON.stringify({
+      event,
+      provider: signalingProvider,
+      reason: reason || 'none',
+    });
+
+    try {
+      if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+        const blob = new Blob([payload], { type: 'application/json' });
+        navigator.sendBeacon('/api/transfer/telemetry', blob);
+        return;
+      }
+    } catch {
+      // Fallback to fetch below.
+    }
+
+    void fetch('/api/transfer/telemetry', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: payload,
+      keepalive: true,
+    }).catch(() => undefined);
+  };
+
   const sendSignal = (signal: SignalPayload) => {
-    const ws = wsRef.current;
     const creds = credsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN || !creds) {
+    if (!creds) {
+      return;
+    }
+
+    if (signalingProvider === 'supabase') {
+      const channel = supabaseChannelRef.current;
+      if (!channel) {
+        return;
+      }
+
+      const payload: SupabaseSignalEnvelope = {
+        transferId: creds.transferId,
+        role: creds.role,
+        token: creds.token,
+        signal,
+      };
+      void channel.send({
+        type: 'broadcast',
+        event: 'signal',
+        payload,
+      }).then((status) => {
+        if (status === 'ok') {
+          reportSignalingTelemetry('signaling-delivery-success');
+          return;
+        }
+        reportSignalingTelemetry('signaling-delivery-failure', `supabase-${status}`);
+      });
+      return;
+    }
+
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
       return;
     }
 
@@ -299,7 +375,12 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
       signal,
     };
 
-    ws.send(JSON.stringify(msg));
+    try {
+      ws.send(JSON.stringify(msg));
+      reportSignalingTelemetry('signaling-delivery-success');
+    } catch {
+      reportSignalingTelemetry('signaling-delivery-failure', 'ws-send-throw');
+    }
   };
 
   const sendReadySignal = () => {
@@ -638,17 +719,70 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
     }
   };
 
-  const connectSignaling = (creds: SignalingCreds, isReconnect = false) => {
-    closeSignalingSocket();
-    manualSocketCloseRef.current = false;
-    closePeerConnection();
-    if (!isReconnect) {
-      resetTransferState();
-      reconnectAttemptRef.current = 0;
-      setReconnectAttempt(0);
+  const connectSupabaseSignaling = (creds: SignalingCreds, isReconnect = false) => {
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) {
+      handleLiveFailure('Supabase signaling is selected but Supabase environment variables are missing.');
+      return;
     }
-    credsRef.current = creds;
 
+    const channel = supabase.channel(`webrtc-transfer:${creds.transferId}`, {
+      config: {
+        broadcast: { self: false, ack: false },
+      },
+    });
+    supabaseChannelRef.current = channel;
+    setSocketState('connecting');
+
+    channel.on('broadcast', { event: 'signal' }, (event) => {
+      if (supabaseChannelRef.current !== channel) {
+        return;
+      }
+
+      const envelope = (event as { payload?: SupabaseSignalEnvelope }).payload;
+      if (!envelope || envelope.transferId !== creds.transferId) {
+        return;
+      }
+
+      if (envelope.role === creds.role && envelope.token === creds.token) {
+        return;
+      }
+
+      if (envelope.signal.type === 'ready') {
+        setError('');
+        setStatus('connecting');
+        startConnectionTimeout();
+      }
+
+      void handleRelaySignal(envelope.signal);
+    });
+
+    channel.subscribe((status) => {
+      if (supabaseChannelRef.current !== channel) {
+        return;
+      }
+
+      if (status === 'SUBSCRIBED') {
+        setSocketState('connected');
+        clearReconnectTimer();
+        setStatus(creds.role === 'sender' ? 'waiting-peer' : 'connecting');
+        if (isReconnect) {
+          setStatus('connecting');
+        }
+        sendReadySignal();
+        return;
+      }
+
+      if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+        setSocketState('disconnected');
+        if (!manualSocketCloseRef.current && statusRef.current !== 'completed') {
+          scheduleReconnect();
+        }
+      }
+    });
+  };
+
+  const connectWebSocketSignaling = (creds: SignalingCreds, isReconnect = false) => {
     const socketUrl = process.env.NEXT_PUBLIC_SIGNALING_URL || defaultSignalingUrl();
     const ws = new WebSocket(socketUrl);
     wsRef.current = ws;
@@ -728,8 +862,27 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
     };
 
     ws.onerror = () => {
-      handleLiveFailure('Could not connect to signaling server. Start signaling service and retry.');
+      handleLiveFailure('Could not connect to signaling server. Verify signaling service and retry.');
     };
+  };
+
+  const connectSignaling = (creds: SignalingCreds, isReconnect = false) => {
+    closeSignalingSocket();
+    manualSocketCloseRef.current = false;
+    closePeerConnection();
+    if (!isReconnect) {
+      resetTransferState();
+      reconnectAttemptRef.current = 0;
+      setReconnectAttempt(0);
+    }
+    credsRef.current = creds;
+
+    if (signalingProvider === 'supabase') {
+      connectSupabaseSignaling(creds, isReconnect);
+      return;
+    }
+
+    connectWebSocketSignaling(creds, isReconnect);
   };
 
   useEffect(() => {
@@ -743,6 +896,9 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
           if (typeof data.maxUploadBytes === 'number' && Number.isFinite(data.maxUploadBytes) && data.maxUploadBytes > 0) {
             setMaxUploadBytes(data.maxUploadBytes);
           }
+          if (data.signalingProvider === 'ws' || data.signalingProvider === 'supabase') {
+            setSignalingProvider(data.signalingProvider);
+          }
           return;
         }
 
@@ -754,6 +910,9 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
         setIceServers(normalized);
         if (typeof data.maxUploadBytes === 'number' && Number.isFinite(data.maxUploadBytes) && data.maxUploadBytes > 0) {
           setMaxUploadBytes(data.maxUploadBytes);
+        }
+        if (data.signalingProvider === 'ws' || data.signalingProvider === 'supabase') {
+          setSignalingProvider(data.signalingProvider);
         }
       } catch {
         // Keep default STUN when config endpoint is unavailable.
@@ -886,17 +1045,17 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-zinc-700 bg-zinc-900/70 p-3 md:p-4">
+      {/* <div className="rounded-xl border border-zinc-700 bg-zinc-900/70 p-3 md:p-4">
         <div className="mb-2 flex items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-zinc-100">Live P2P transfer (WebRTC)</h3>
           <Badge variant="secondary" className="rounded-md bg-cyan-500/15 text-cyan-100">
-            Phase 5: Hardened
+            Phase 6: Supabase migration
           </Badge>
         </div>
         <p className="text-xs text-zinc-400">
           Live transfer includes signaling validation, retry logic, configurable ICE servers (TURN/STUN), and sender fallback upload.
         </p>
-      </div>
+      </div> */}
 
       <div className="grid gap-3 md:grid-cols-2">
         <button
@@ -1033,7 +1192,9 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
 
       {error && (
         <div className="rounded-lg border border-red-300/30 bg-red-500/10 p-3 text-xs text-red-200">
-          {error}
+          {/* For Dev */}
+          {/* {error} */}
+          Failed
           {status === 'failed' && credsRef.current && (
             <div className="mt-2">
               <Button
