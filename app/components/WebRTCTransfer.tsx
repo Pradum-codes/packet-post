@@ -1045,7 +1045,7 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
 
   return (
     <div className="space-y-4">
-      <div className="rounded-xl border border-zinc-700 bg-zinc-900/70 p-3 md:p-4">
+      {/* <div className="rounded-xl border border-zinc-700 bg-zinc-900/70 p-3 md:p-4">
         <div className="mb-2 flex items-center justify-between gap-2">
           <h3 className="text-sm font-semibold text-zinc-100">Live P2P transfer (WebRTC)</h3>
           <Badge variant="secondary" className="rounded-md bg-cyan-500/15 text-cyan-100">
@@ -1055,7 +1055,7 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
         <p className="text-xs text-zinc-400">
           Live transfer includes signaling validation, retry logic, configurable ICE servers (TURN/STUN), and sender fallback upload.
         </p>
-      </div>
+      </div> */}
 
       <div className="grid gap-3 md:grid-cols-2">
         <button
@@ -1192,7 +1192,9 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
 
       {error && (
         <div className="rounded-lg border border-red-300/30 bg-red-500/10 p-3 text-xs text-red-200">
-          {error}
+          {/* For Dev */}
+          {/* {error} */}
+          Failed
           {status === 'failed' && credsRef.current && (
             <div className="mt-2">
               <Button
