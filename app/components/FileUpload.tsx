@@ -92,7 +92,18 @@ export default function FileUpload() {
     }
   };
 
+  const MAX_CLASSIC_FILE_SIZE = 10 * 1024 * 1024;
+
   const handleFile = (file: File) => {
+    if (mode === 'classic' && file.size > MAX_CLASSIC_FILE_SIZE) {
+      setSelectedFile(null);
+      setResult(null);
+      setError('File is too large. Classic upload supports files up to 10 MB.');
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+      return;
+    }
     setSelectedFile(file);
     setError('');
     setResult(null);
@@ -107,6 +118,10 @@ export default function FileUpload() {
 
   const handleUpload = async () => {
     if (!selectedFile) return;
+    if (mode === 'classic' && selectedFile.size > MAX_CLASSIC_FILE_SIZE) {
+      setError('File is too large. Classic upload supports files up to 10 MB.');
+      return;
+    }
 
     setIsUploading(true);
     setError('');
@@ -237,6 +252,7 @@ export default function FileUpload() {
                   <p className="mt-1 text-sm text-zinc-400">
                     or <span className="font-semibold text-emerald-300">browse your device</span>
                   </p>
+                  <p className="mt-2 text-xs text-zinc-500">Classic upload limit: 10 MB</p>
                   <input
                     ref={fileInputRef}
                     type="file"
