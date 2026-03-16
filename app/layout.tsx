@@ -3,9 +3,9 @@ import { Roboto_Mono } from 'next/font/google';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Packet Post - Send files instantly',
+  title: 'dropr - Send files instantly',
   description: 'Send files instantly with no account needed. Share secure links or use private browser-to-browser transfers.',
-  metadataBase: new URL('https://packet-post.pradum.dev'),
+  metadataBase: new URL('https://dropr.pradum.dev'),
   alternates: {
     canonical: '/',
   },
@@ -22,8 +22,9 @@ export const metadata: Metadata = {
       type: 'image/svg+xml',
     },
   },
-  applicationName: 'Packet Post',
+  applicationName: 'dropr',
   keywords: [
+    "dropr",
     "peer to peer file transfer",
     "webrtc file sharing",
     "send files without server",
@@ -41,21 +42,21 @@ export const metadata: Metadata = {
   openGraph: {
     type: 'website',
     url: '/',
-    title: 'Packet Post - Send files instantly',
-    siteName: 'Packet Post',
+    title: 'dropr - Send files instantly',
+    siteName: 'dropr',
     description: 'Send files instantly with no account needed. Share secure links or use private browser-to-browser transfers.',
     images: [
       {
         url: '/packet-post.png',
         width: 1200,
         height: 630,
-        alt: 'Packet Post',
+        alt: 'dropr',
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Packet Post - Send files instantly',
+    title: 'dropr - Send files instantly',
     description: 'Send files instantly with no account needed. Share secure links or use private browser-to-browser transfers.',
     images: ['/packet-post.png'],
   },
@@ -91,10 +92,10 @@ export default function RootLayout({
           __html: JSON.stringify({
             "@context": "https://schema.org",
             "@type": "SoftwareApplication",
-            "name": "Packet Post",
+            "name": "dropr",
             "applicationCategory": "FileTransferApplication",
             "operatingSystem": "Web",
-            "url": "https://packet-post.pradum.dev",
+            "url": "https://dropr.pradum.dev",
             "description":
               "Peer-to-peer file transfer application using WebRTC for direct browser-to-browser file sharing without server storage.",
             "offers": {

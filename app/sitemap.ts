@@ -1,7 +1,7 @@
 export default function sitemap() {
   return [
     {
-      url: 'https://packet-post.pradum.dev',
+      url: 'https://dropr.pradum.dev',
       lastModified: new Date(),
     },
   ];

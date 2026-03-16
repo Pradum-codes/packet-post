@@ -4,10 +4,10 @@ export default function Home() {
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'WebApplication',
-    name: 'Packet Post',
+    name: 'dropr',
     description:
       'Send files instantly with no account needed. Share secure links or use private browser-to-browser transfers.',
-    url: 'https://packet-post.pradum.dev',
+    url: 'https://dropr.pradum.dev',
     applicationCategory: 'FileTransferApplication',
     operatingSystem: 'All',
     offers: {
@@ -20,7 +20,7 @@ export default function Home() {
   return (
     <main className="bg-background" aria-labelledby="page-title">
       <h1 id="page-title" className="sr-only">
-        Packet Post - Send files instantly
+        dropr - Send files instantly
       </h1>
       <script
         type="application/ld+json"

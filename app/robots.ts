@@ -4,6 +4,6 @@ export default function robots() {
       userAgent: '*',
       allow: '/',
     },
-    sitemap: 'https://packet-post.pradum.dev/sitemap.xml',
+    sitemap: 'https://dropr.pradum.dev/sitemap.xml',
   };
 }

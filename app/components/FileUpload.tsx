@@ -192,8 +192,11 @@ export default function FileUpload() {
             </div>
             <div className="space-y-1">
               <CardTitle className="text-balance text-2xl font-semibold tracking-tight text-zinc-100 md:text-3xl">
-                Share files in seconds
+                dropr
               </CardTitle>
+              <p className="text-sm font-medium text-emerald-200/90">
+                Share files in seconds
+              </p>
               <CardDescription className="max-w-2xl text-sm text-zinc-300">
                 {mode === 'classic'
                   ? 'Drop one file, upload instantly, then copy a ready-to-share link.'
@@ -393,7 +396,7 @@ export default function FileUpload() {
           )}
 
           <CardFooter className="justify-between border-t border-zinc-700 px-4 py-3 text-xs text-zinc-400 md:px-6">
-            <span className="text-emerald-200">Packet Post</span>
+            <span className="text-emerald-200">dropr</span>
             <span>Built with Lot&apos;s of Coffee</span>
             <span>
               Created by{' '}
