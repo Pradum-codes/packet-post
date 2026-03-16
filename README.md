@@ -1,273 +1,106 @@
-# 📤 File Share
+# dropr (Packet Post)
 
-A modern, secure, and self-hosted file sharing application built with Next.js. Share files instantly without relying on external services or requiring user accounts.
+A modern, self-hosted file sharing app built with Next.js. Share files via classic uploads or live browser-to-browser transfers using WebRTC.
 
-![File Share Demo](https://img.shields.io/badge/Status-Production%20Ready-brightgreen)
-![Next.js](https://img.shields.io/badge/Next.js-16.1.0-black)
-![TypeScript](https://img.shields.io/badge/TypeScript-Ready-blue)
-![Self-Hosted](https://img.shields.io/badge/Self--Hosted-100%25-orange)
+## Features
+- Classic uploads with shareable, temporary download links
+- Live WebRTC file transfers (sender/receiver with transfer codes)
+- Optional fallback to classic upload when live transfer fails
+- Supabase-backed transfer sessions and optional Supabase Realtime signaling
+- Configurable upload limits and ICE server configuration
+- Automatic best-effort cleanup of temporary files
+- No user accounts required
 
-## 🌟 Features
-
-### 🔒 **Privacy & Security**
-- **100% Self-Hosted** - Files never leave your server
-- **No External Dependencies** - Zero third-party file storage services
-- **Auto-Cleanup** - Files automatically deleted after 1 hour
-- **Unique URLs** - Each file gets a unique, secure download link
-- **Local Storage Only** - All files stored in `public/uploads/` on your machine
-
-### ⚡ **User Experience**
-- **Drag & Drop Interface** - Modern, intuitive file upload
-- **Instant Upload** - Fast file processing with real-time feedback
-- **No Account Required** - Share files without user registration
-- **Mobile Responsive** - Works perfectly on all devices
-- **Copy to Clipboard** - One-click link copying
-- **File Type Icons** - Visual file type recognition
-
-### 🛠️ **Technical Features**
-- **Built with Next.js 16.1** - Modern React framework
-- **TypeScript Support** - Full type safety
-- **File Size Limits** - Configurable upload limits (default: 10MB)
-- **Multiple File Types** - Support for all file formats
-- **Clean Architecture** - Well-organized, maintainable code
-
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
-- Node.js 18+ or Bun
+- Node.js 18+
 - pnpm, npm, or yarn
 
-### Installation
-
-1. **Clone & Install**
-   ```bash
-   git clone <your-repo-url>
-   cd file-share
-   pnpm install
-   ```
-
-2. **Development Mode**
-   ```bash
-   pnpm dev
-   ```
-   Open [http://localhost:3000](http://localhost:3000)
-
-3. **Production Build**
-   ```bash
-   pnpm build
-   pnpm start
-   ```
-
-## 📁 Project Structure
-
-```
-file-share/
-├── app/
-│   ├── api/upload/          # File upload API endpoint
-│   │   └── route.ts         # Upload handler with cleanup logic
-│   ├── components/          # React components
-│   │   └── FileUpload.tsx   # Main upload interface
-│   ├── layout.tsx           # App layout and metadata
-│   └── page.tsx             # Home page
-├── public/
-│   └── uploads/             # 📁 Local file storage directory
-├── package.json             # Dependencies (Next.js, React only)
-├── next.config.js           # Next.js configuration
-└── tsconfig.json            # TypeScript configuration
+### Install
+```bash
+pnpm install
 ```
 
-## 🔧 Configuration
-
-### File Size Limits
-Modify in `next.config.js`:
-```javascript
-experimental: {
-  serverActions: {
-    bodySizeLimit: '10mb', // Change this value
-  },
-}
-```
-
-### Auto-Cleanup Timer
-Modify in `app/api/upload/route.ts`:
-```typescript
-const oneHourAgo = Date.now() - 60 * 60 * 1000; // Change cleanup time
-```
-
-### Upload Directory
-The upload directory is set in `route.ts`:
-```typescript
-const UPLOAD_DIR = join(process.cwd(), 'public', 'uploads');
-```
-
-## 🛡️ Security Features
-
-### **Local-Only Storage**
-- Files stored directly on your server filesystem
-- No external cloud storage services
-- Complete control over your data
-
-### **Automatic Cleanup**
-- Files older than 1 hour are automatically deleted
-- Cleanup runs probabilistically on each upload (10% chance)
-- Prevents server storage bloat
-
-### **Secure File Naming**
-- Unique IDs generated using timestamp + random string
-- Original filenames preserved for user reference
-- Prevents file conflicts and unauthorized access
-
-### **No External Dependencies**
-- Zero third-party file storage services
-- No API keys or external accounts required
-- Completely self-contained application
-
-## 📡 API Endpoints
-
-### POST `/api/upload`
-Upload a file to the server.
-
-**Request:**
-- `Content-Type: multipart/form-data`
-- Body: `FormData` with `file` field
-
-**Response:**
-```json
-{
-  "success": true,
-  "link": "/uploads/filename.ext", 
-  "filename": "original-name.ext",
-  "size": 1024
-}
-```
-
-**Error Response:**
-```json
-{
-  "success": false,
-  "message": "Error description"
-}
-```
-
-## 🔄 File Lifecycle
-
-1. **Upload**: File uploaded via drag-drop or file picker
-2. **Processing**: Unique filename generated, file saved to `/public/uploads/`
-3. **Sharing**: Shareable URL generated (`/uploads/unique-id.ext`)
-4. **Access**: Direct download from your server
-5. **Cleanup**: Automatic deletion after 1 hour
-
-## 🌐 Deployment Options
-
-### **Local Development**
+### Development
 ```bash
 pnpm dev
-# Access: http://localhost:3000
 ```
+Open `http://localhost:3000`.
 
-### **Production Server**
+### Production
 ```bash
 pnpm build
 pnpm start
-# Configure reverse proxy (nginx) for public access
 ```
 
-### **Docker Deployment**
-```dockerfile
-FROM node:18-alpine
-WORKDIR /app
-COPY package*.json ./
-RUN npm install
-COPY . .
-RUN npm run build
-EXPOSE 3000
-CMD ["npm", "start"]
+## Configuration
+
+### Upload limits
+- Client-side classic upload limit is currently enforced in the UI.
+- Server-side limit is controlled by `WEB_UPLOAD_MAX_BYTES` (default: 25 MB).
+
+### WebRTC
+- `WEBRTC_SIGNALING_PROVIDER=ws|supabase`
+- `NEXT_PUBLIC_SIGNALING_URL` (when using `ws` provider)
+- `WEBRTC_ICE_SERVERS_JSON` (JSON array of ICE server configs)
+- `WEBRTC_SESSION_TTL_MINUTES` (default 15, min 10, max 30)
+- `WEBRTC_CREATE_RATE_LIMIT_PER_MIN` (default 20)
+- `WEBRTC_JOIN_RATE_LIMIT_PER_MIN` (default 60)
+- `WEBRTC_LOG_EVENTS=1` (optional console metrics)
+
+### Supabase (required for session storage)
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `SUPABASE_DB_SCHEMA` (default: `public`)
+
+See `docs/supabase/README.md` for schema setup.
+
+## Storage & File Lifecycle
+- Uploaded files are stored in the OS temp directory at `os.tmpdir()/packet-post-uploads`.
+- Files are served through `GET /api/download/[filename]`.
+- Cleanup is best-effort and runs probabilistically during uploads; files older than 1 hour are deleted when cleanup runs.
+- On serverless platforms, temp storage may be ephemeral.
+
+## API Endpoints
+
+### `POST /api/upload`
+Upload a file via `multipart/form-data` with a `file` field.
+
+### `GET /api/download/[filename]?name=<original-name>`
+Download a previously uploaded file.
+
+### `GET /api/transfer/config`
+Returns ICE servers, max upload bytes, and signaling provider.
+
+### `POST /api/transfer/create`
+Creates a transfer session and returns a transfer code and sender token.
+
+### `POST /api/transfer/join`
+Joins a transfer session using a transfer code and returns a receiver token.
+
+### `POST /api/transfer/telemetry`
+Accepts client signaling delivery events.
+
+### `GET /api/transfer/metrics`
+Returns in-memory transfer counters.
+
+## Project Structure
+```
+app/
+  api/
+    upload/
+    download/[filename]/
+    transfer/
+  components/
+    FileUpload.tsx
+    WebRTCTransfer.tsx
+lib/
+  supabase/
+  webrtc/
 ```
 
-## 🎨 Customization
-
-### **Styling**
-- CSS-in-JS styling in components
-- Easy to modify colors, animations, and layouts
-- Responsive design built-in
-
-### **File Type Support**
-Add new file type icons in `FileUpload.tsx`:
-```typescript
-const fileIcons: Record<string, string> = {
-  // Add new file types here
-  newtype: '🆕',
-};
-```
-
-### **Features to Add**
-- Password protection for files
-- Custom expiry times
-- File compression
-- Batch uploads
-- Download statistics
-
-## 🏃‍♂️ Performance
-
-- **Upload Speed**: Direct filesystem writes (no network overhead)
-- **Download Speed**: Static file serving via Next.js
-- **Storage**: Local SSD/HDD performance
-- **Scalability**: Limited by server resources
-
-## 🐛 Troubleshooting
-
-### **Upload Fails**
-- Check file size limits in `next.config.js`
-- Verify `public/uploads/` directory permissions
-- Check available disk space
-
-### **Files Not Accessible**
-- Ensure `public/uploads/` exists and is writable
-- Check file permissions after upload
-- Verify Next.js static file serving is working
-
-### **Cleanup Issues**
-- Check filesystem permissions for deletion
-- Monitor disk space usage
-- Adjust cleanup frequency in `route.ts`
-
-## 📄 License
-
-This project is open source and available under the [MIT License](LICENSE).
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Add tests if applicable
-5. Submit a pull request
-
-## 📊 Technical Details
-
-- **Framework**: Next.js 16.1 (App Router)
-- **Language**: TypeScript
-- **Storage**: Local filesystem
-- **File Handling**: Node.js `fs` module
-- **Frontend**: React 19 with CSS-in-JS
-- **Build**: Standalone output for production
-
----
-
-**🔐 Privacy-First File Sharing - Your files, your server, your control.**
-
-
-### Prnding Work:
-High: Production build currently fails due remote Google Font fetch. next build errors on next/font fetching Roboto Mono, which blocks deploy in restricted/no-egress build environments.
-app/layout.tsx:2
-
-Medium: Rate limiting is process-memory only, so it won’t hold across multiple instances/restarts (weak anti-abuse in real production).
-lib/webrtc/rateLimit.ts:12
-docs/IMPLEMENTATION_AND_DEPLOYMENT.md:71
-
-Medium: Metrics/telemetry are in-memory and unauthenticated endpoints; useful for dev, but not strong for production observability/security.
-app/api/transfer/metrics/route.ts:6
-app/api/transfer/telemetry/route.ts:12
-lib/webrtc/observability.ts:29
-
-Low: Env appears still local-oriented (NEXT_PUBLIC_APP_URL, NEXT_PUBLIC_SIGNALING_URL present with local-style values), so prod env finalization is still needed.
+## Deployment Notes
+- When using the WebSocket signaling provider, you must run a compatible signaling server and set `NEXT_PUBLIC_SIGNALING_URL`.
+- For Supabase signaling, ensure Realtime is enabled and the schema is applied.

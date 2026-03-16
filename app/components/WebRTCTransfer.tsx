@@ -934,6 +934,12 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
     setFallbackResult(null);
   };
 
+  const formatTransferCode = (input: string) => {
+    const cleaned = input.replace(/[^a-zA-Z0-9]/g, '').toUpperCase().slice(0, 8);
+    if (cleaned.length <= 4) return cleaned;
+    return `${cleaned.slice(0, 4)}-${cleaned.slice(4)}`;
+  };
+
   const handleCreateTransfer = async () => {
     if (!selectedFile) {
       setError('Select a file first.');
@@ -981,7 +987,7 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
       const response = await fetch('/api/transfer/join', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transferCode: joinCode.trim().toUpperCase() }),
+        body: JSON.stringify({ transferCode: formatTransferCode(joinCode.trim()) }),
       });
       const data = (await response.json()) as JoinTransferResponse | { message?: string };
       if (!response.ok || !('success' in data) || data.success !== true) {
@@ -989,7 +995,7 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
         throw new Error(message);
       }
 
-      setJoinCode(data.session.transferCode);
+      setJoinCode(formatTransferCode(data.session.transferCode));
       setStatus('connecting');
       connectSignaling({
         transferId: data.session.transferId,
@@ -1128,7 +1134,7 @@ export default function WebRTCTransfer({ onUseClassic }: Props) {
             <Input
               id="join-code"
               value={joinCode}
-              onChange={(e) => setJoinCode(e.target.value.toUpperCase())}
+              onChange={(e) => setJoinCode(formatTransferCode(e.target.value))}
               placeholder="ABCD-EFGH"
               className="border-zinc-700 bg-zinc-950 text-zinc-200"
             />

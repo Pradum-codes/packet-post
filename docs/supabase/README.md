@@ -1,6 +1,6 @@
-# Supabase Migration Bootstrap (Phase 6.1)
+# Supabase WebRTC Session Store
 
-This folder contains initial SQL and setup notes for moving WebRTC transfer state/signaling control from in-memory storage to Supabase.
+This folder contains the SQL schema and setup notes for storing WebRTC transfer sessions in Supabase. Signaling can be done via Supabase Realtime when `WEBRTC_SIGNALING_PROVIDER=supabase`.
 
 ## Apply the schema
 1. Open your Supabase project SQL editor.
@@ -15,12 +15,12 @@ Set the following values in your app environment:
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `SUPABASE_DB_SCHEMA=public`
 
-## Current status
-- `POST /api/transfer/create` and `POST /api/transfer/join` are Supabase-backed.
-- Supabase Realtime is available for live signaling (`WEBRTC_SIGNALING_PROVIDER=supabase`).
-- Legacy WebSocket signaling path remains available for rollback (`WEBRTC_SIGNALING_PROVIDER=ws`).
-- Legacy in-repo signaling server runtime/script has been removed.
+## Current behavior
+- `POST /api/transfer/create` and `POST /api/transfer/join` use Supabase for sessions.
+- Supabase Realtime is used for live signaling when the provider is set to `supabase`.
+- WebSocket signaling remains available when `WEBRTC_SIGNALING_PROVIDER=ws`.
 
-## Telemetry and metrics hooks
+## Telemetry and metrics
 - Client signaling delivery events are accepted by `POST /api/transfer/telemetry`.
 - Aggregated counters are available via `GET /api/transfer/metrics`.
+- Metrics are stored in memory and reset on deploy/restart.

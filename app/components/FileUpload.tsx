@@ -192,7 +192,9 @@ export default function FileUpload() {
             </div>
             <div className="space-y-1">
               <CardTitle className="text-balance text-2xl font-semibold tracking-tight text-zinc-100 md:text-3xl">
-                dropr
+                <span className="bg-linear-to-r from-emerald-200 via-cyan-200 to-emerald-400 bg-clip-text font-black tracking-[0.12em] text-transparent drop-shadow-[0_0_14px_rgba(16,185,129,0.35)]">
+                  dropr
+                </span>
               </CardTitle>
               <p className="text-sm font-medium text-emerald-200/90">
                 Share files in seconds
