@@ -402,7 +402,7 @@ export default function FileUpload() {
             <span>Built with Lot&apos;s of Coffee</span>
             <span>
               Created by{' '}
-              <a href="https://github.com/atomic-panda/file-share">
+              <a href="https://github.com/Pradum-codes/packet-post">
                 <span className="text-emerald-200">Atomic Panda</span>
               </a>
             </span>
